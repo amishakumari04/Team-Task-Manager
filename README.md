@@ -1,4 +1,4 @@
-🚀 *Team Task Manager (Full-Stack)
+🚀 Team Task Manager (Full-Stack)
 A robust web application designed for teams to create projects, assign tasks, and track real-time progress. Built with a focus on Role-Based Access Control (RBAC) and data relationships.
 
 ✨ Key Features
