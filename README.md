@@ -58,4 +58,4 @@ Bash
 streamlit run app.py
 
 🌐 Live Demo
-The application is live at: [Insert Your Railway URL Here]
+The application is live at: web-production-736d8.up.railway.app
