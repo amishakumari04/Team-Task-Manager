@@ -1,153 +1,140 @@
 import streamlit as st
 import bcrypt
 import pandas as pd
-from datetime import datetime, timedelta
-from sqlalchemy.orm import sessionmaker
-from models import SessionLocal, User, Project, Task  # Ensure models.py is in the same folder
+from models import SessionLocal, User, Project, Task
+from datetime import datetime
 
-# --- Configuration ---
-st.set_page_config(page_title="Team Task Manager", layout="wide")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Team Task Manager", layout="wide", initial_sidebar_state="expanded")
 db = SessionLocal()
 
-# --- Auth Helpers ---
-def hash_pw(pw): 
-    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+# --- CSS FOR STYLING ---
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    div.stButton > button:first-child { width: 100%; border-radius: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-def check_pw(pw, hashed): 
-    return bcrypt.checkpw(pw.encode(), hashed.encode())
+# --- AUTH HELPERS ---
+def hash_pw(pw): return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+def check_pw(pw, hashed): return bcrypt.checkpw(pw.encode(), hashed.encode())
 
-# Initialize session state for user login
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = None
-if 'user_role' not in st.session_state:
-    st.session_state.user_role = None
-if 'username' not in st.session_state:
-    st.session_state.username = None
+if 'user' not in st.session_state:
+    st.session_state.user = None
 
-# --- AUTHENTICATION UI (Centered) ---
-if st.session_state.user_id is None:
-    st.title("🛡️ Team Task Manager")
-    col1, col2, col3 = st.columns([1, 2, 1])
+# --- AUTHENTICATION FLOW ---
+if st.session_state.user is None:
+    st.markdown("<h1 style='text-align: center; color: #ff4b4b;'>🚀 Team Task Manager</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center;'>Secure Collaboration & Task Tracking</p>", unsafe_allow_html=True)
     
+    _, col2, _ = st.columns([1, 1.5, 1])
     with col2:
         tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
         
         with tab1:
-            u = st.text_input("Username", key="login_u")
-            p = st.text_input("Password", type="password", key="login_p")
-            if st.button("Login", use_container_width=True):
+            u = st.text_input("Username", key="l_u")
+            p = st.text_input("Password", type="password", key="l_p")
+            if st.button("Login"):
                 user = db.query(User).filter(User.username == u).first()
                 if user and check_pw(p, user.password):
-                    st.session_state.user_id = user.id
-                    st.session_state.user_role = user.role
-                    st.session_state.username = user.username
-                    st.success("Welcome back!")
+                    st.session_state.user = user
+                    st.success("Login Successful!")
                     st.rerun()
-                else:
-                    st.error("Invalid credentials")
-
+                else: st.error("Invalid Credentials")
+        
         with tab2:
-            new_u = st.text_input("New Username", key="reg_u")
-            new_p = st.text_input("New Password", type="password", key="reg_p")
-            new_role = st.selectbox("Role", ["Member", "Admin"], key="reg_role")
-            if st.button("Create Account", use_container_width=True):
-                exists = db.query(User).filter(User.username == new_u).first()
-                if exists:
-                    st.warning("User already exists!")
-                else:
-                    user = User(username=new_u, password=hash_pw(new_p), role=new_role)
-                    db.add(user)
+            nu = st.text_input("Choose Username")
+            np = st.text_input("Choose Password", type="password")
+            role = st.selectbox("Assign Role", ["Member", "Admin"])
+            if st.button("Create Account"):
+                if not db.query(User).filter(User.username == nu).first():
+                    db.add(User(username=nu, password=hash_pw(np), role=role))
                     db.commit()
-                    st.success("Account created! Please log in.")
+                    st.success("Account created! Please switch to Login tab.")
+                else: st.error("Username already taken.")
 
-# --- MAIN APP UI ---
+# --- DASHBOARD FLOW ---
 else:
+    curr_user = st.session_state.user
+    
     # Sidebar Navigation
-    st.sidebar.title(f"👋 Hello, {st.session_state.username}")
-    st.sidebar.info(f"Role: {st.session_state.user_role}")
-    if st.sidebar.button("Logout", use_container_width=True):
-        st.session_state.user_id = None
+    st.sidebar.title("Navigation")
+    st.sidebar.info(f"User: **{curr_user.username}** \n\n Role: **{curr_user.role}**")
+    if st.sidebar.button("Logout"):
+        st.session_state.user = None
         st.rerun()
 
-    # 1. Dashboard Metrics
     st.title("🚀 Project Dashboard")
-    all_tasks = db.query(Task).all()
+
+    # --- METRICS (Filtered for logged-in user) ---
+    my_tasks = db.query(Task).filter(Task.assigned_to == curr_user.id).all()
     
-    if all_tasks:
-        df = pd.DataFrame([{
-            'Status': t.status, 
-            'Due': t.due_date
-        } for t in all_tasks])
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Tasks", len(df))
-        m2.metric("Completed", len(df[df['Status'] == 'Done']))
-        overdue = len(df[(df['Status'] != 'Done') & (df['Due'] < datetime.now())])
-        m3.metric("Overdue", overdue, delta_color="inverse")
+    col1, col2, col3 = st.columns(3)
+    total = len(my_tasks)
+    completed = len([t for t in my_tasks if t.status == 'Done'])
+    overdue = len([t for t in my_tasks if t.status != 'Done' and t.due_date < datetime.now()])
+    
+    col1.metric("Total Tasks", total)
+    col2.metric("Completed", completed)
+    col3.metric("Overdue", overdue, delta_color="inverse")
     
     st.divider()
 
-    # 2. Admin Controls (Role-Based Access)
-    if st.session_state.user_role == "Admin":
+    # --- ADMIN CONTROLS ---
+    if curr_user.role == "Admin":
         with st.expander("🛠️ Admin Controls - Create & Assign"):
             c1, c2 = st.columns(2)
+            
             with c1:
                 st.subheader("Create Project")
                 p_name = st.text_input("Project Name")
                 if st.button("Add Project"):
-                    db.add(Project(name=p_name))
-                    db.commit()
-                    st.success(f"Project '{p_name}' added!")
-                    st.rerun()
-            
+                    if p_name:
+                        db.add(Project(name=p_name))
+                        db.commit()
+                        st.success(f"Project '{p_name}' Added!")
+                        st.rerun()
+
             with c2:
                 st.subheader("Assign Task")
+                t_title = st.text_input("Task Title")
+                
+                # Fetch fresh data for dropdowns
                 projs = db.query(Project).all()
                 users = db.query(User).all()
                 
-                t_name = st.text_input("Task Title")
-                t_proj = st.selectbox("Select Project", [p.name for p in projs])
-                t_user = st.selectbox("Assign To", [u.username for u in users])
-                t_date = st.date_input("Due Date", min_value=datetime.now())
+                p_map = {p.name: p.id for p in projs}
+                u_map = {u.username: u.id for u in users}
                 
-                if st.button("Assign"):
-                    p_obj = db.query(Project).filter(Project.name == t_proj).first()
-                    u_obj = db.query(User).filter(User.username == t_user).first()
-                    new_task = Task(
-                        title=t_name, 
-                        project_id=p_obj.id, 
-                        assigned_to=u_obj.id,
-                        due_date=datetime.combine(t_date, datetime.min.time())
-                    )
-                    db.add(new_task)
-                    db.commit()
-                    st.success("Task assigned!")
-                    st.rerun()
+                sel_p = st.selectbox("Select Project", list(p_map.keys()))
+                sel_u = st.selectbox("Assign To", list(u_map.keys()))
+                
+                if st.button("Assign Task"):
+                    if t_title:
+                        new_t = Task(title=t_title, project_id=p_map[sel_p], assigned_to=u_map[sel_u])
+                        db.add(new_t)
+                        db.commit()
+                        st.success("Task Successfully Assigned!")
+                        st.rerun()
 
-    # 3. Task Board (Interactive Status Tracking)
-    st.header("📋 My Task Board")
-    my_tasks = db.query(Task).filter(Task.assigned_to == st.session_state.user_id).all()
-    
+    # --- TASK BOARD ---
+    st.subheader("📋 My Task Board")
     if not my_tasks:
-        st.info("You have no tasks assigned.")
+        st.info("No tasks assigned to you yet.")
     else:
         for t in my_tasks:
             with st.container():
-                col_info, col_date, col_status = st.columns([3, 2, 2])
+                tc1, tc2, tc3 = st.columns([3, 2, 1])
+                tc1.write(f"**{t.title}**")
+                tc2.write(f"📁 {t.project.name if t.project else 'N/A'}")
                 
-                # Highlight red if overdue
-                display_title = f"**{t.title}**"
-                if t.due_date < datetime.now() and t.status != "Done":
-                    display_title += " ⚠️ OVERDUE"
-                
-                col_info.write(display_title)
-                col_date.write(f"📅 {t.due_date.strftime('%Y-%m-%d')}")
-                
-                current_idx = ["Todo", "Doing", "Done"].index(t.status)
-                new_status = col_status.selectbox(
-                    "Update Status", 
-                    ["Todo", "Doing", "Done"], 
-                    index=current_idx, 
+                # Dynamic Status Update
+                status_options = ["Todo", "Doing", "Done"]
+                new_status = tc3.selectbox(
+                    "Change Status", 
+                    status_options, 
+                    index=status_options.index(t.status), 
                     key=f"task_{t.id}"
                 )
                 
